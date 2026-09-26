@@ -264,9 +264,13 @@ func TestE2E(t *testing.T) {
 		}{name: tool + "_empty", http: []exchange{{method: "GET", path: path, query: q, status: 200,
 			reply: `{"count":0,"results":[]}`}}, calls: []toolCall{{name: tool, args: args, want: `{"count":0,"results":[]}`}}})
 	}
+	scenarios = append(scenarios, struct {
+		name  string
+		http  []exchange
+		calls []toolCall
+	}{name: "list_bookmarks_without_query", http: []exchange{{method: "GET", path: "/api/bookmarks/", query: pageQuery("0"), status: 200,
+		reply: `{"count":0,"results":[]}`}}, calls: []toolCall{{name: "list_bookmarks", args: map[string]any{}, want: `{"count":0,"results":[]}`}}})
 	invalid := []toolCall{
-		{name: "list_bookmarks", args: map[string]any{"query": " \t"}, wantError: "query must"},
-		{name: "list_bookmarks", args: map[string]any{}, wantError: "validating"},
 		{name: "list_bookmarks", args: map[string]any{"query": 123}, wantError: "validating"},
 		{name: "list_bookmarks", args: map[string]any{"query": query, "offset": -1}, wantError: "offset must"},
 		{name: "list_tags", args: map[string]any{"offset": -1}, wantError: "offset must"},

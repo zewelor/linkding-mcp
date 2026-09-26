@@ -66,7 +66,7 @@ startup_timeout_sec = 120
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
-| `list_bookmarks` | nonempty `query`, optional `offset >= 0` | `count`, up to 20 bookmarks |
+| `list_bookmarks` | optional `query` (including `#tag` syntax), optional `offset >= 0` | `count`, up to 20 bookmarks |
 | `list_tags` | optional `offset >= 0` | `count`, up to 20 tags (`id`, `name`) |
 | `get_bookmark` | positive `id` | bookmark including `notes` |
 | `save_bookmark` | HTTP/HTTPS URL | `created` or `already_exists`, `id`, `url`, `title` |

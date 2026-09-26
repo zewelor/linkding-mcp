@@ -74,7 +74,7 @@ type saveResult struct {
 }
 
 type searchInput struct {
-	Query  string `json:"query" jsonschema:"Linkding search phrase, including #tag syntax"`
+	Query  string `json:"query,omitempty" jsonschema:"Optional Linkding search phrase, including #tag syntax; omit or leave empty to list all bookmarks"`
 	Offset int64  `json:"offset,omitempty" jsonschema:"Index of the first result; default 0"`
 }
 
@@ -181,14 +181,13 @@ func (c *linkdingClient) do(req *http.Request, output any) error {
 }
 
 func (c *linkdingClient) listBookmarks(ctx context.Context, input searchInput) (bookmarksPage, error) {
-	if strings.TrimSpace(input.Query) == "" {
-		return bookmarksPage{}, errors.New("query must not be empty")
-	}
 	if input.Offset < 0 {
 		return bookmarksPage{}, errors.New("offset must be nonnegative")
 	}
 	query := pagination(input.Offset)
-	query.Set("q", input.Query)
+	if strings.TrimSpace(input.Query) != "" {
+		query.Set("q", input.Query)
+	}
 	var response struct {
 		Count   *int64     `json:"count"`
 		Results []bookmark `json:"results"`
