@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ['**']
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      image_id: ${{ steps.export.outputs.image_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.58.0'
+      - uses: immanuwell/dockerfile-roast@1c87b2aa189338c24db4acde40864dae8994de8f # v1.7.0
+        with:
+          image-tag: 1.7.0@sha256:4f31be49f26804c0a2f8a0ab0ae578719e30376323e8fd5951c6dcc79a478b40
+      - run: just ci
+      - name: Export tested image
+        id: export
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'zewelor/linkding-mcp'
+        run: |
+          set -euo pipefail
+          docker image inspect linkding-mcp:e2e --format 'image_id={{.Id}}' >> "$GITHUB_OUTPUT"
+          docker save linkding-mcp:e2e | gzip > "$RUNNER_TEMP/image.tar.gz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'zewelor/linkding-mcp'
+        with:
+          name: tested-image
+          path: ${{ runner.temp }}/image.tar.gz
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e
+          path: artifacts/e2e*.json
+          if-no-files-found: warn
+
+  publish:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'zewelor/linkding-mcp'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tested-image
+          path: ${{ runner.temp }}/image
+      - name: Publish tested image to GHCR
+        env:
+          IMAGE: ghcr.io/zewelor/linkding-mcp
+          REVISION: ${{ github.sha }}
+          EXPECTED_IMAGE_ID: ${{ needs.verify.outputs.image_id }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          docker load --input "$RUNNER_TEMP/image/image.tar.gz"
+          test "$(docker image inspect linkding-mcp:e2e --format '{{.Id}}')" = "$EXPECTED_IMAGE_ID"
+          export DOCKER_CONFIG
+          DOCKER_CONFIG="$(mktemp -d)"
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+          docker tag linkding-mcp:e2e "$IMAGE:sha-$REVISION"
+          docker tag linkding-mcp:e2e "$IMAGE:latest"
+          docker push "$IMAGE:sha-$REVISION"
+          docker push "$IMAGE:latest"
+          printf 'Published `%s:latest` from `%s` (tested image `%s`).\n' "$IMAGE" "$REVISION" "$EXPECTED_IMAGE_ID" >> "$GITHUB_STEP_SUMMARY"
