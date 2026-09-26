@@ -27,11 +27,13 @@ const (
 )
 
 type bookmark struct {
-	ID          int64    `json:"id"`
-	URL         string   `json:"url"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	TagNames    []string `json:"tag_names"`
+	ID           int64    `json:"id"`
+	URL          string   `json:"url"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description"`
+	TagNames     []string `json:"tag_names"`
+	DateAdded    string   `json:"date_added" jsonschema:"ISO 8601 date added to Linkding; use this to determine recency, not the bookmark ID"`
+	DateModified string   `json:"date_modified" jsonschema:"ISO 8601 date last modified in Linkding"`
 }
 
 type bookmarkDetails struct {
@@ -40,7 +42,7 @@ type bookmarkDetails struct {
 }
 
 type bookmarksPage struct {
-	Count   int64      `json:"count"`
+	Count   int64      `json:"count" jsonschema:"Total number of matching bookmarks across all pages"`
 	Results []bookmark `json:"results"`
 }
 
@@ -74,7 +76,7 @@ type saveResult struct {
 }
 
 type searchInput struct {
-	Query  string `json:"query,omitempty" jsonschema:"Optional Linkding search phrase, including #tag syntax; omit or leave empty to list all bookmarks"`
+	Query  string `json:"query,omitempty" jsonschema:"Optional Linkding search across title, description, notes and URL; omit or leave empty for all non-archived bookmarks. Examples: #go; \"exact phrase\"; #go or #rust; #go not #readlater. In Linkding 1.44+ with legacy search disabled, adjacent terms use AND; and/or/not and parentheses are supported"`
 	Offset int64  `json:"offset,omitempty" jsonschema:"Index of the first result; default 0"`
 }
 
@@ -316,7 +318,10 @@ func run(ctx context.Context) error {
 	server := mcp.NewServer(&mcp.Implementation{Name: "linkding-mcp", Version: "0.1.0"}, nil)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_bookmarks", Description: "Search Linkding bookmarks using its search syntax (including #tag). " +
-			"Returns up to 20 results; use offset to fetch further pages.",
+			"Lists non-archived bookmarks, newest first by date_added (Linkding 1.47.0 default order). " +
+			"Returns date_added and date_modified; bookmark IDs do not determine recency. " +
+			"Returns up to 20 results; count is the total number of matches across all pages. " +
+			"Start at offset 0 and increase it by the number of returned results until you reach count.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input searchInput) (*mcp.CallToolResult, bookmarksPage, error) {
 		out, err := c.listBookmarks(ctx, input)
@@ -330,7 +335,8 @@ func run(ctx context.Context) error {
 		return nil, out, err
 	})
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "get_bookmark", Description: "Retrieve a Linkding bookmark by ID, including its notes.",
+		Name: "get_bookmark", Description: "Retrieve a Linkding bookmark by ID, including its notes, " +
+			"date_added and date_modified (ISO 8601).",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input bookmarkInput) (*mcp.CallToolResult, bookmarkDetails, error) {
 		out, err := c.getBookmark(ctx, input)

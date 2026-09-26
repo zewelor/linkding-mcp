@@ -71,9 +71,22 @@ startup_timeout_sec = 120
 | `get_bookmark` | positive `id` | bookmark including `notes` |
 | `save_bookmark` | HTTP/HTTPS URL | `created` or `already_exists`, `id`, `url`, `title` |
 
-Results are structured MCP JSON. A bookmark contains `id`, `url`, `title`, `description`, and `tag_names`; bookmark details also include `notes`. A tag contains `id` and `name`. Empty lists are arrays: `[]`.
+Results are structured MCP JSON. A bookmark contains `id`, `url`, `title`, `description`, `tag_names`, `date_added`, and `date_modified`; bookmark details also include `notes`. Dates are ISO 8601 strings passed through from Linkding, preserving precision and timezone. A tag contains `id` and `name`. Empty lists are arrays: `[]`.
 
-Search uses [Linkding's syntax](https://linkding.link/search/), such as `#go`. The offset is the index of the first result and defaults to 0. Fetch subsequent pages by increasing the offset by the number of returned items until you reach `count`. The API does not return web page contents; `notes` are notes stored with the bookmark.
+`list_bookmarks` lists non-archived bookmarks and preserves the API's order. In Linkding 1.47.0, the endpoint defaults to newest first by `date_added`; offset 0 therefore returns the newest matching bookmarks. Use `date_added` to determine recency, not IDs or `date_modified`. This behavior was checked against the version's [API route](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/api/routes.py), [search defaults](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/models.py), and [ordering](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/queries.py).
+
+Search uses [Linkding's syntax](https://linkding.link/search/) across title, description, notes, and URL. Omit `query` or leave it empty to list all non-archived bookmarks. With the search engine introduced in Linkding 1.44.0 and legacy search disabled:
+
+| Query | Meaning |
+| --- | --- |
+| `#go` | Bookmarks tagged `go` |
+| `"exact phrase"` | Match an exact phrase |
+| `kubernetes #go` | Match both the word and the tag (implicit AND) |
+| `#go or #rust` | Match either tag |
+| `#go not #readlater` | Match `go` and exclude `readlater` |
+| `kubernetes (#go or #rust)` | Combine text with a grouped tag expression |
+
+The offset is the index of the first result and defaults to 0. `count` is the total number of matches across all pages, not the current page size. Fetch subsequent pages by increasing the offset by the number of returned items until you reach `count`. The API does not return web page contents; `notes` are notes stored with the bookmark.
 
 Saving sends only the URL; Linkding determines metadata and automatic tags. An existing bookmark does not trigger a POST. Checking and saving **are not atomic**: a concurrent save may update an existing bookmark. An interrupted POST is not retried, and its outcome may be unknown; check the bookmark before trying again. `/check/` may fetch page metadata.
 
@@ -91,7 +104,7 @@ just show_dockerignore   # actual build context
 just ci                 # full local validation
 ```
 
-During development: `go test -count=1 -run 'TestE2E/new_url_saved_once' ./...`. E2E uses only a local fixture and a dummy token. Artifacts: `artifacts/e2e.json` and `artifacts/e2e-docker.json`; they contain results, HTTP sequences, and authorization checks without the token value. The test container uses the host network to reach the fixture on loopback. Compatibility with a live instance and hosted CI requires separate validation.
+During development: `go test -count=1 -run 'TestE2E/new_url_saved_once' ./...`. E2E uses only a local fixture and a dummy token. Artifacts: `artifacts/e2e.json` and `artifacts/e2e-docker.json`; they contain results, HTTP sequences, and authorization checks without the token value. The bookmark pagination scenario verifies date passthrough (including subsecond precision and timezone), API order preservation with IDs that do not follow date order, and total match counts across pages. The detail scenario verifies dates together with stored notes. These scenarios verify the adapter contract; the fixture does not establish Linkding's ordering or search behavior. The test container uses the host network to reach the fixture on loopback. Compatibility with a live instance and hosted CI requires separate validation.
 
 Development and validation rules: [AGENTS.md](AGENTS.md). Local skills are stored only in `.agents/skills`; `skills-lock.json` records their sources and versions.
 

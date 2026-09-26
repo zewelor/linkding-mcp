@@ -154,10 +154,13 @@ func TestE2E(t *testing.T) {
 	}
 
 	bookmark := func(id int) string {
-		return fmt.Sprintf(`{"id":%d,"url":"https://example.test/%d","title":"Go café","description":"Article","tag_names":["go"],"notes":"Private notes","unread":true}`, id, id)
+		return fmt.Sprintf(`{"id":%d,"url":"https://example.test/%d","title":"Go café","description":"Article","tag_names":["go"],`+
+			`"date_added":"2026-09-%02dT09:46:23.006313Z","date_modified":"2026-09-26T18:01:14.275335+02:00",`+
+			`"notes":"Private notes","unread":true}`, id, id, 27-id)
 	}
 	brief := func(id int) string {
-		return fmt.Sprintf(`{"id":%d,"url":"https://example.test/%d","title":"Go café","description":"Article","tag_names":["go"]}`, id, id)
+		return fmt.Sprintf(`{"id":%d,"url":"https://example.test/%d","title":"Go café","description":"Article","tag_names":["go"],`+
+			`"date_added":"2026-09-%02dT09:46:23.006313Z","date_modified":"2026-09-26T18:01:14.275335+02:00"}`, id, id, 27-id)
 	}
 	fullPage, briefPage, tags := []string{}, []string{}, []string{}
 	for id := 1; id <= 20; id++ {
