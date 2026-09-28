@@ -76,8 +76,9 @@ type saveResult struct {
 }
 
 type searchInput struct {
-	Query  string `json:"query,omitempty" jsonschema:"Optional Linkding search across title, description, notes and URL; omit or leave empty for all non-archived bookmarks. Examples: #go; \"exact phrase\"; #go or #rust; #go not #readlater. In Linkding 1.44+ with legacy search disabled, adjacent terms use AND; and/or/not and parentheses are supported"`
-	Offset int64  `json:"offset,omitempty" jsonschema:"Index of the first result; default 0"`
+	Query    string `json:"query,omitempty" jsonschema:"Optional Linkding search across title, description, notes and URL; omit or leave empty for all bookmarks in the selected archive state. Examples: #go; \"exact phrase\"; #go or #rust; #go not #readlater. In Linkding 1.44+ with legacy search disabled, adjacent terms use AND; and/or/not and parentheses are supported"`
+	Offset   int64  `json:"offset,omitempty" jsonschema:"Index of the first result; default 0"`
+	Archived bool   `json:"archived,omitempty" jsonschema:"Set true to search only archived bookmarks; default false lists only non-archived bookmarks"`
 }
 
 type tagsInput struct {
@@ -88,8 +89,16 @@ type bookmarkInput struct {
 	ID int64 `json:"id" jsonschema:"Positive Linkding bookmark ID"`
 }
 
+type bookmarkFields struct {
+	Title       *string   `json:"title,omitempty" jsonschema:"Optional title; omit or null to preserve an existing title or let Linkding fetch one on creation. Empty string clears an existing title"`
+	Description *string   `json:"description,omitempty" jsonschema:"Optional description; omit or null to preserve an existing description or let Linkding fetch one on creation. Empty string clears an existing description"`
+	Notes       *string   `json:"notes,omitempty" jsonschema:"Optional stored notes; omit or null to preserve existing notes. Empty string clears notes"`
+	TagNames    *[]string `json:"tag_names,omitempty" jsonschema:"Optional complete list of tag names, replacing existing tags; omit or null to preserve them. Empty array clears manually assigned tags. Linkding automatic tags may be added"`
+}
+
 type saveInput struct {
 	URL string `json:"url" jsonschema:"Absolute HTTP or HTTPS URL to save"`
+	bookmarkFields
 }
 
 type linkdingClient struct {
@@ -194,7 +203,11 @@ func (c *linkdingClient) listBookmarks(ctx context.Context, input searchInput) (
 		Count   *int64     `json:"count"`
 		Results []bookmark `json:"results"`
 	}
-	if err := c.get(ctx, "bookmarks/", query, &response); err != nil {
+	path := "bookmarks/"
+	if input.Archived {
+		path = "bookmarks/archived/"
+	}
+	if err := c.get(ctx, path, query, &response); err != nil {
 		return bookmarksPage{}, err
 	}
 	if response.Count == nil || response.Results == nil {
@@ -253,6 +266,8 @@ func (c *linkdingClient) saveBookmark(ctx context.Context, input saveInput) (sav
 	if len(check.Bookmark) == 0 {
 		return saveResult{}, errors.New("invalid check response from linkding")
 	}
+	method, path, status := http.MethodPost, "bookmarks/", "created"
+	var payload any = input
 	if string(check.Bookmark) != "null" {
 		var existing saveResponse
 		if err := json.Unmarshal(check.Bookmark, &existing); err != nil {
@@ -261,14 +276,18 @@ func (c *linkdingClient) saveBookmark(ctx context.Context, input saveInput) (sav
 		if err := existing.validate(); err != nil {
 			return saveResult{}, err
 		}
-		return saveResult{Status: "already_exists", ID: existing.ID, URL: existing.URL, Title: *existing.Title}, nil
+		if input.Title == nil && input.Description == nil && input.Notes == nil && input.TagNames == nil {
+			return saveResult{Status: "already_exists", ID: existing.ID, URL: existing.URL, Title: *existing.Title}, nil
+		}
+		method, path, status = http.MethodPatch, "bookmarks/"+strconv.FormatInt(existing.ID, 10)+"/", "updated"
+		payload = input.bookmarkFields
 	}
-	body, err := json.Marshal(input)
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return saveResult{}, fmt.Errorf("encode bookmark: %w", err)
 	}
-	u := c.base.JoinPath("api", "bookmarks/")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
+	u := c.base.JoinPath("api", path)
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return saveResult{}, errors.New("could not construct bookmark save request")
 	}
@@ -280,7 +299,7 @@ func (c *linkdingClient) saveBookmark(ctx context.Context, input saveInput) (sav
 	if err := saved.validate(); err != nil {
 		return saveResult{}, fmt.Errorf("save failed; outcome may be unknown: %w", err)
 	}
-	return saveResult{Status: "created", ID: saved.ID, URL: saved.URL, Title: *saved.Title}, nil
+	return saveResult{Status: status, ID: saved.ID, URL: saved.URL, Title: *saved.Title}, nil
 }
 
 func validateBookmark(b *bookmark) error {
@@ -318,7 +337,8 @@ func run(ctx context.Context) error {
 	server := mcp.NewServer(&mcp.Implementation{Name: "linkding-mcp", Version: "0.1.0"}, nil)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_bookmarks", Description: "Search Linkding bookmarks using its search syntax (including #tag). " +
-			"Lists non-archived bookmarks, newest first by date_added (Linkding 1.47.0 default order). " +
+			"Lists non-archived bookmarks by default; set archived=true to search the archive. " +
+			"Newest first by date_added (Linkding 1.47.0 default order). " +
 			"Returns date_added and date_modified; bookmark IDs do not determine recency. " +
 			"Returns up to 20 results; count is the total number of matches across all pages. " +
 			"Start at offset 0 and increase it by the number of returned results until you reach count.",
@@ -343,9 +363,12 @@ func run(ctx context.Context) error {
 		return nil, out, err
 	})
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "save_bookmark", Description: "Save an HTTP/HTTPS URL using Linkding metadata and automatic tags. " +
-			"Existing URLs are returned without POST. The check and save are not atomic: " +
-			"a concurrent save can update an existing bookmark. An interrupted POST is never retried.",
+		Name: "save_bookmark", Description: "Save an HTTP/HTTPS URL with optional title, description, notes and tag_names. " +
+			"With URL alone, Linkding fetches metadata for new bookmarks and existing bookmarks are returned unchanged. " +
+			"For existing URLs, provided fields are updated using PATCH; omitted or null fields are preserved. " +
+			"tag_names replaces the tag list; list_tags first to reuse existing names. Automatic tags may be added. " +
+			"Returns created, already_exists or updated. The check and write are not atomic. " +
+			"Interrupted POST or PATCH requests are never retried; check the bookmark before trying again.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input saveInput) (*mcp.CallToolResult, saveResult, error) {
 		out, err := c.saveBookmark(ctx, input)

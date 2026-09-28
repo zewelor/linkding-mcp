@@ -65,8 +65,9 @@ func TestE2E(t *testing.T) {
 		mode = "docker"
 	}
 	report := struct {
-		Mode  string     `json:"mode"`
-		Cases []evidence `json:"cases"`
+		Mode  string      `json:"mode"`
+		Cases []evidence  `json:"cases"`
+		Tools []*mcp.Tool `json:"tools,omitempty"`
 	}{Mode: mode, Cases: []evidence{}}
 	defer func() {
 		if err := os.MkdirAll("artifacts", 0o755); err != nil {
@@ -139,11 +140,35 @@ func TestE2E(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if report.Tools == nil {
+			report.Tools = tools.Tools
+		}
 		names := []string{}
 		for _, tool := range tools.Tools {
 			names = append(names, tool.Name)
 			if tool.Annotations == nil || tool.Annotations.ReadOnlyHint != (tool.Name != "save_bookmark") {
 				t.Errorf("incorrect read-only hint for %s", tool.Name)
+			}
+			if tool.Name == "save_bookmark" {
+				encoded, err := json.Marshal(tool.InputSchema)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var schema struct {
+					Required   []string                   `json:"required"`
+					Properties map[string]json.RawMessage `json:"properties"`
+				}
+				if err := json.Unmarshal(encoded, &schema); err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Equal(schema.Required, []string{"url"}) {
+					t.Errorf("save_bookmark required fields: %v", schema.Required)
+				}
+				for _, field := range []string{"title", "description", "notes", "tag_names"} {
+					if _, ok := schema.Properties[field]; !ok {
+						t.Errorf("save_bookmark schema missing %s", field)
+					}
+				}
 			}
 		}
 		slices.Sort(names)
@@ -220,6 +245,51 @@ func TestE2E(t *testing.T) {
 		}, calls: []toolCall{
 			{name: "save_bookmark", args: newArgs, want: `{"status":"already_exists","id":22,"url":"` + newURL + `","title":"Saved by Linkding"}`},
 		}},
+		{name: "new_url_with_metadata", http: []exchange{check,
+			{method: "POST", path: post.path, query: post.query, status: 201,
+				body:  `{"url":"` + newURL + `","title":"Trawl — scraping","description":"Strony → Markdown i JSON","notes":"Sprawdzić integrację MCP\nBez wdrażania","tag_names":["scraping","selfhosted"]}`,
+				reply: `{"id":22,"url":"` + newURL + `","title":"Trawl — scraping"}`},
+		}, calls: []toolCall{{name: "save_bookmark", args: map[string]any{
+			"url": newURL, "title": "Trawl — scraping", "description": "Strony → Markdown i JSON",
+			"notes": "Sprawdzić integrację MCP\nBez wdrażania", "tag_names": []string{"scraping", "selfhosted"},
+		}, want: `{"status":"created","id":22,"url":"` + newURL + `","title":"Trawl — scraping"}`}}},
+		{name: "existing_url_metadata_update_and_read", http: []exchange{
+			{method: "GET", path: check.path, query: check.query, status: 200, reply: `{"bookmark":` + saveResult + `}`},
+			{method: "PATCH", path: "/api/bookmarks/22/", query: post.query, status: 200,
+				body: `{"description":"Nowy opis","tag_names":["scraping","selfhosted"]}`, reply: saveResult},
+			{method: "GET", path: "/api/bookmarks/22/", query: post.query, status: 200,
+				reply: `{"id":22,"url":"` + newURL + `","title":"Saved by Linkding","description":"Nowy opis","tag_names":["scraping","selfhosted"],"notes":"Keep these notes","unread":true,"is_archived":true}`},
+		}, calls: []toolCall{
+			{name: "save_bookmark", args: map[string]any{"url": newURL, "description": "Nowy opis", "tag_names": []string{"scraping", "selfhosted"}},
+				want: `{"status":"updated","id":22,"url":"` + newURL + `","title":"Saved by Linkding"}`},
+			{name: "get_bookmark", args: map[string]any{"id": 22},
+				want: `{"id":22,"url":"` + newURL + `","title":"Saved by Linkding","description":"Nowy opis","tag_names":["scraping","selfhosted"],"notes":"Keep these notes","date_added":"","date_modified":""}`},
+		}},
+		{name: "existing_url_clear_metadata", http: []exchange{
+			{method: "GET", path: check.path, query: check.query, status: 200, reply: `{"bookmark":` + saveResult + `}`},
+			{method: "PATCH", path: "/api/bookmarks/22/", query: post.query, status: 200,
+				body:  `{"title":"","description":"","notes":"","tag_names":[]}`,
+				reply: `{"id":22,"url":"` + newURL + `","title":""}`},
+		}, calls: []toolCall{{name: "save_bookmark", args: map[string]any{
+			"url": newURL, "title": "", "description": "", "notes": "", "tag_names": []string{},
+		}, want: `{"status":"updated","id":22,"url":"` + newURL + `","title":""}`}}},
+		{name: "existing_url_notes_only", http: []exchange{
+			{method: "GET", path: check.path, query: check.query, status: 200, reply: `{"bookmark":` + saveResult + `}`},
+			{method: "PATCH", path: "/api/bookmarks/22/", query: post.query, status: 200,
+				body: `{"notes":"Only these notes change"}`, reply: saveResult},
+		}, calls: []toolCall{{name: "save_bookmark", args: map[string]any{"url": newURL, "notes": "Only these notes change"},
+			want: `{"status":"updated","id":22,"url":"` + newURL + `","title":"Saved by Linkding"}`}}},
+		{name: "archived_bookmarks_pagination", http: []exchange{
+			{method: "GET", path: "/api/bookmarks/archived/", query: searchQuery("0"), status: 200,
+				reply: `{"count":21,"results":[` + strings.Join(fullPage, ",") + `]}`},
+			{method: "GET", path: "/api/bookmarks/archived/", query: searchQuery("20"), status: 200,
+				reply: `{"count":21,"results":[` + bookmark(21) + `]}`},
+		}, calls: []toolCall{
+			{name: "list_bookmarks", args: map[string]any{"query": query, "archived": true},
+				want: `{"count":21,"results":[` + strings.Join(briefPage, ",") + `]}`},
+			{name: "list_bookmarks", args: map[string]any{"query": query, "offset": 20, "archived": true},
+				want: `{"count":21,"results":[` + brief(21) + `]}`},
+		}},
 		{name: "redirect_not_followed", http: []exchange{
 			{method: "GET", path: check.path, query: check.query, status: 302,
 				location: "/linkding/api/unexpected/"},
@@ -274,6 +344,9 @@ func TestE2E(t *testing.T) {
 	}{name: "list_bookmarks_without_query", http: []exchange{{method: "GET", path: "/api/bookmarks/", query: pageQuery("0"), status: 200,
 		reply: `{"count":0,"results":[]}`}}, calls: []toolCall{{name: "list_bookmarks", args: map[string]any{}, want: `{"count":0,"results":[]}`}}})
 	invalid := []toolCall{
+		{name: "list_bookmarks", args: map[string]any{"archived": "yes"}, wantError: "validating"},
+		{name: "save_bookmark", args: map[string]any{"url": newURL, "description": 123}, wantError: "validating"},
+		{name: "save_bookmark", args: map[string]any{"url": newURL, "tag_names": []any{"scraping", 123}}, wantError: "validating"},
 		{name: "list_bookmarks", args: map[string]any{"query": 123}, wantError: "validating"},
 		{name: "list_bookmarks", args: map[string]any{"query": query, "offset": -1}, wantError: "offset must"},
 		{name: "list_tags", args: map[string]any{"offset": -1}, wantError: "offset must"},
@@ -330,6 +403,27 @@ func TestE2E(t *testing.T) {
 		}{
 			name: "post_" + fault.name + "_without_retry", http: []exchange{check, x},
 			calls: []toolCall{{name: "save_bookmark", args: newArgs, wantError: fault.wantError}}})
+	}
+	for _, fault := range []struct {
+		name, reply, wantError string
+		status                 int
+		disconnect             bool
+	}{
+		{"interrupted", "", "outcome may be unknown", 200, true},
+		{"invalid_result", `{}`, "invalid bookmark", 200, false},
+		{"malformed", `{`, "invalid json", 200, false},
+		{"failure", fixtureToken, "http 500", 500, false},
+	} {
+		x := check
+		x.reply = `{"bookmark":` + saveResult + `}`
+		scenarios = append(scenarios, struct {
+			name  string
+			http  []exchange
+			calls []toolCall
+		}{name: "patch_" + fault.name + "_without_retry", http: []exchange{x,
+			{method: "PATCH", path: "/api/bookmarks/22/", query: post.query, body: `{"description":"Updated"}`,
+				status: fault.status, reply: fault.reply, disconnect: fault.disconnect}},
+			calls: []toolCall{{name: "save_bookmark", args: map[string]any{"url": newURL, "description": "Updated"}, wantError: fault.wantError}}})
 	}
 	scenarios = append(scenarios, struct {
 		name  string

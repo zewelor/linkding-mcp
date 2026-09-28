@@ -1,6 +1,6 @@
 # Linkding MCP
 
-A minimal local MCP server for an existing Linkding instance: search bookmarks, read notes and tags, and save URLs. Transport: **stdio**. It does not open a port.
+A minimal local MCP server for an existing Linkding instance: search active or archived bookmarks, read notes and tags, and save or edit bookmark metadata. Transport: **stdio**. It does not open a port.
 
 ## Getting started
 
@@ -66,16 +66,16 @@ startup_timeout_sec = 120
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
-| `list_bookmarks` | optional `query` (including `#tag` syntax), optional `offset >= 0` | `count`, up to 20 bookmarks |
+| `list_bookmarks` | optional `query` (including `#tag` syntax), optional `offset >= 0`, optional `archived` (default `false`) | `count`, up to 20 bookmarks |
 | `list_tags` | optional `offset >= 0` | `count`, up to 20 tags (`id`, `name`) |
 | `get_bookmark` | positive `id` | bookmark including `notes` |
-| `save_bookmark` | HTTP/HTTPS URL | `created` or `already_exists`, `id`, `url`, `title` |
+| `save_bookmark` | HTTP/HTTPS `url`; optional `title`, `description`, `notes`, `tag_names` | `created`, `already_exists` or `updated`, `id`, `url`, `title` |
 
 Results are structured MCP JSON. A bookmark contains `id`, `url`, `title`, `description`, `tag_names`, `date_added`, and `date_modified`; bookmark details also include `notes`. Dates are ISO 8601 strings passed through from Linkding, preserving precision and timezone. A tag contains `id` and `name`. Empty lists are arrays: `[]`.
 
-`list_bookmarks` lists non-archived bookmarks and preserves the API's order. In Linkding 1.47.0, the endpoint defaults to newest first by `date_added`; offset 0 therefore returns the newest matching bookmarks. Use `date_added` to determine recency, not IDs or `date_modified`. This behavior was checked against the version's [API route](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/api/routes.py), [search defaults](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/models.py), and [ordering](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/queries.py).
+`list_bookmarks` lists non-archived bookmarks by default. Set `archived: true` to search only archived bookmarks using the same query and pagination options. Search both states with two calls. The tool preserves the API's order. In Linkding 1.47.0, the endpoint defaults to newest first by `date_added`; offset 0 therefore returns the newest matching bookmarks. Use `date_added` to determine recency, not IDs or `date_modified`. This behavior was checked against the version's [API route](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/api/routes.py), [search defaults](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/models.py), and [ordering](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/queries.py).
 
-Search uses [Linkding's syntax](https://linkding.link/search/) across title, description, notes, and URL. Omit `query` or leave it empty to list all non-archived bookmarks. With the search engine introduced in Linkding 1.44.0 and legacy search disabled:
+Search uses [Linkding's syntax](https://linkding.link/search/) across title, description, notes, and URL. Omit `query` or leave it empty to list all bookmarks in the selected archive state. With the search engine introduced in Linkding 1.44.0 and legacy search disabled:
 
 | Query | Meaning |
 | --- | --- |
@@ -88,9 +88,31 @@ Search uses [Linkding's syntax](https://linkding.link/search/) across title, des
 
 The offset is the index of the first result and defaults to 0. `count` is the total number of matches across all pages, not the current page size. Fetch subsequent pages by increasing the offset by the number of returned items until you reach `count`. The API does not return web page contents; `notes` are notes stored with the bookmark.
 
-Saving sends only the URL; Linkding determines metadata and automatic tags. An existing bookmark does not trigger a POST. Checking and saving **are not atomic**: a concurrent save may update an existing bookmark. An interrupted POST is not retried, and its outcome may be unknown; check the bookmark before trying again. `/check/` may fetch page metadata.
+With only `url`, `save_bookmark` keeps its original behavior: Linkding determines metadata and automatic tags for a new bookmark; an existing bookmark is returned unchanged with `already_exists`. If optional fields are supplied for an existing URL, the tool sends a PATCH containing only those fields and returns `updated`. This also works for an archived bookmark and does not change its archive state. The tool does not change bookmark URLs or flags.
 
-An error or malformed `/check/` response does not trigger a POST. API errors, invalid JSON, and incomplete save responses are reported as tool errors. There are no automatic retries. `created` means that a POST succeeded after the earlier check found no bookmark; it does not guarantee exclusive creation. A concurrent save may change an existing bookmark's tags, notes, and flags.
+| Optional field | Omitted or `null` | Explicit empty value |
+| --- | --- | --- |
+| `title`, `description` | Preserve existing value; fetch metadata on creation | `""` clears an existing value; Linkding fetches metadata on creation |
+| `notes` | Preserve existing notes; empty on creation | `""` clears notes |
+| `tag_names` | Preserve existing tags; use automatic tags on creation | `[]` clears manually assigned tags |
+
+`tag_names` is the complete replacement tag list. Call `list_tags` first to reuse existing names, and include every tag you want to keep when editing. Linkding can create new tag names and adds tags from matching automatic rules on creation and updates, even when `tag_names` is omitted or empty. These semantics follow the [official API contract](https://linkding.link/api/).
+
+Empty-field updates and tag replacement were also checked against Linkding 1.47.0's [serializer](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/api/serializers.py#L152-L161) and [tag assignment](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/services/bookmarks.py#L226-L244). The [existing-URL query](https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/models.py#L105-L113) includes archived bookmarks.
+
+For example, use `save_bookmark` with:
+
+```json
+{
+  "url": "https://github.com/germondai/trawl",
+  "description": "Self-hosted web scraping with JavaScript, CAPTCHA handling and MCP tools.",
+  "tag_names": ["scraping", "selfhosted"]
+}
+```
+
+Checking and writing **are not atomic**: a concurrent save may update an existing bookmark. Interrupted POST and PATCH requests are not retried, and their outcome may be unknown; check the bookmark before trying again. `/check/` may fetch page metadata.
+
+An error or malformed `/check/` response does not trigger a write. API errors, invalid JSON, and incomplete save responses are reported as tool errors. There are no automatic retries. `created` means that a POST succeeded after the earlier check found no bookmark; it does not guarantee exclusive creation. A concurrent save may change an existing bookmark's tags, notes, and flags.
 
 Configuration requires an absolute HTTP/HTTPS instance URL without credentials, a query, or a fragment, and a nonempty token without invalid header characters. HTTP requests propagate cancellation, have a 30-second timeout and a 2 MiB response limit, and do not follow redirects. The token is sent only to the configured instance. Invalid configuration terminates the process with diagnostics on stderr; diagnostics do not expose the token or raw API error responses.
 
@@ -104,7 +126,7 @@ just show_dockerignore   # actual build context
 just ci                 # full local validation
 ```
 
-During development: `go test -count=1 -run 'TestE2E/new_url_saved_once' ./...`. E2E uses only a local fixture and a dummy token. Artifacts: `artifacts/e2e.json` and `artifacts/e2e-docker.json`; they contain results, HTTP sequences, and authorization checks without the token value. The bookmark pagination scenario verifies date passthrough (including subsecond precision and timezone), API order preservation with IDs that do not follow date order, and total match counts across pages. The detail scenario verifies dates together with stored notes. These scenarios verify the adapter contract; the fixture does not establish Linkding's ordering or search behavior. The test container uses the host network to reach the fixture on loopback. Compatibility with a live instance and hosted CI requires separate validation.
+During development: `go test -count=1 -run 'TestE2E/new_url_saved_once' ./...`. E2E uses only a local fixture and a dummy token. Artifacts: `artifacts/e2e.json` and `artifacts/e2e-docker.json`; they contain the published tool schemas, results, HTTP sequences, and authorization checks without the token value. The bookmark pagination scenarios verify active and archive routes, date passthrough (including subsecond precision and timezone), API order preservation with IDs that do not follow date order, and total match counts across pages. Metadata scenarios cover creation, partial updates, clearing fields and tags, URL-only no-op, and interrupted PATCH without retry. The detail scenario verifies dates together with stored notes. These scenarios verify the adapter contract; the fixture does not establish Linkding's ordering or search behavior. The test container uses the host network to reach the fixture on loopback. Compatibility with a live instance and hosted CI requires separate validation.
 
 Development and validation rules: [AGENTS.md](AGENTS.md). Local skills are stored only in `.agents/skills`; `skills-lock.json` records their sources and versions.
 
