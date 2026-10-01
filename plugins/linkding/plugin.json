@@ -1,0 +1,24 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "linkding",
+  "version": "0.2.0",
+  "description": "Search, read, save, and edit bookmarks in one Linkding instance using the local Linkding CLI.",
+  "author": {
+    "name": "zewelor"
+  },
+  "homepage": "https://github.com/zewelor/linkding",
+  "repository": "https://github.com/zewelor/linkding",
+  "keywords": ["linkding", "bookmarks", "cli", "mcp"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Linkding",
+        "shortDescription": "Search, read, save, and edit Linkding bookmarks.",
+        "developerName": "zewelor",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "defaultPrompt": ["Find my recent Linkding bookmarks about Go."]
+      }
+    }
+  }
+}

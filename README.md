@@ -1,20 +1,53 @@
-# Linkding MCP
+# Linkding
 
-A minimal local MCP server for an existing Linkding instance: search active or archived bookmarks, read notes and tags, and save or edit bookmark metadata. Transport: **stdio**. It does not open a port.
+A minimal local CLI and MCP server for one existing Linkding instance: search active or archived bookmarks, read notes and tags, and save or edit bookmark metadata. Both interfaces use the same API methods and result types. MCP transport: **stdio**. The program does not open a port.
 
 ## Getting started
 
-Requires Go 1.27.1. `just` provides convenient shortcuts; `go build -o bin/linkding-mcp .` also builds the binary directly.
+Requires Go 1.27.1. `just` provides convenient shortcuts; `go build -o bin/linkding .` also builds the binary directly.
 
 ```sh
 just build
 export LINKDING_URL='https://linkding.example.com'
 read -rs LINKDING_TOKEN
 export LINKDING_TOKEN
-./bin/linkding-mcp
+./bin/linkding bookmarks list --json
 ```
 
-The MCP client launches the process and passes these two environment variables. `LINKDING_URL` is the instance's base URL, such as `https://example.com/linkding/`, without the `/api` suffix. The API token is available in Linkding's settings. Diagnostics go to stderr; stdout is reserved for MCP.
+`LINKDING_URL` is the instance's base URL, such as `https://example.com/linkding/`, without the `/api` suffix. The API token is available in Linkding's settings. The program reads its process environment; it does not source shell startup files or prompt for login. Never pass the token as a command argument.
+
+Without arguments, the binary shows help. `linkding mcp` starts the MCP server; the client launches that process and passes the same environment variables. Diagnostics go to stderr; stdout contains JSON in CLI mode and protocol messages in MCP mode.
+
+### CLI
+
+```sh
+./bin/linkding bookmarks list --query 'kubernetes (#go or #rust)' --json
+./bin/linkding bookmarks list --archived --offset 20 --json
+./bin/linkding bookmarks get 123 --json
+./bin/linkding tags list --json
+./bin/linkding skills get core
+./bin/linkding schema bookmarks save --json
+```
+
+Flags follow their resource and operation. `get` accepts its ID before or after flags. API operations return JSON: indented by default and compact with `--json`. Empty results succeed and contain `[]`. Exit codes: `0` success, `1` API/transport/configuration error, `2` invalid arguments or input, `130` interrupted. Help, version, skills, and schema work offline without credentials.
+
+Save or update metadata with exactly one JSON object on stdin:
+
+```sh
+./bin/linkding bookmarks save --input - --json <<'JSON'
+{
+  "url": "https://example.com/article",
+  "notes": "Read later.\nCheck the examples.",
+  "tag_names": ["go", "reading"]
+}
+JSON
+```
+
+The input is limited to 2 MiB. Field names are case-sensitive; unknown or repeated fields, invalid types, and trailing JSON are rejected before HTTP. The save behavior, optional-field semantics, pagination, and search syntax below apply to both CLI and MCP. Only `url` is required. A supplied `tag_names` list replaces all manually assigned tags.
+
+`skills get core` serves the workflow guide embedded in the installed binary. `schema [resource operation] --json` returns the CLI input bindings and exact MCP input/output schemas, including descriptions and read-only hints, plus the CLI exit codes. It uses an in-memory SDK session without an API client or network connection. There is one workflow skill, `core`.
+
+### Native MCP
 
 Example configuration for a client that supports MCP configuration in JSON (the parent process provides the environment variables):
 
@@ -22,7 +55,8 @@ Example configuration for a client that supports MCP configuration in JSON (the 
 {
   "mcpServers": {
     "linkding": {
-      "command": "/absolute/path/to/linkding-mcp/bin/linkding-mcp"
+      "command": "/absolute/path/to/linkding/bin/linkding",
+      "args": ["mcp"]
     }
   }
 }
@@ -34,12 +68,12 @@ Example configuration for a client that supports MCP configuration in JSON (the 
 docker run --rm -i --pull=always \
   --read-only --user 65532:65532 --cap-drop ALL \
   --security-opt no-new-privileges:true --log-driver none \
-  -e LINKDING_URL -e LINKDING_TOKEN ghcr.io/zewelor/linkding-mcp:latest
+  -e LINKDING_URL -e LINKDING_TOKEN ghcr.io/zewelor/linkding:latest
 ```
 
-Use `-i` without `-t`. The image contains a static binary, CA certificates, and user `65532:65532`. The Linkding instance must be reachable from the container.
+Use `-i` without `-t`. The image contains a static binary, its embedded CLI guide, CA certificates, and user `65532:65532`. It defaults to `mcp`; append arguments after the image name to use CLI, for example `bookmarks list --query '#go' --json`. The Linkding instance must be reachable from the container.
 
-`latest` is updated only after CI passes on `main`. The exact image tested by E2E is published, also with the tag `sha-<full commit SHA>`; the publishing job verifies that the image IDs match. Currently, Linux/amd64 is supported. `--pull=always` downloads the current image at every launch and requires GHCR to be available. For local development, use `just docker-build` (tag `linkding-mcp:e2e`).
+`latest` is updated only after CI passes on `main`. The exact image tested by E2E is published, also with the tag `sha-<full commit SHA>`; the publishing job verifies that the image IDs match. Currently, Linux/amd64 is supported. `--pull=always` downloads the current image at every launch and requires GHCR to be available. For local development, use `just docker-build` (tag `linkding:e2e`).
 
 The container has no writable filesystem, additional capabilities, exposed ports, or host mounts. Docker's default seccomp/AppArmor filters apply where supported by the host. No additional CPU, memory, process, or ulimit restrictions are configured. Docker log persistence is disabled. Network access is required for Linkding's API; a regular bridge network does not restrict outbound access to a single domain.
 
@@ -54,7 +88,7 @@ args = [
   "run", "--rm", "-i", "--pull=always",
   "--read-only", "--user", "65532:65532", "--cap-drop", "ALL",
   "--security-opt", "no-new-privileges:true", "--log-driver", "none",
-  "-e", "LINKDING_URL", "-e", "LINKDING_TOKEN", "ghcr.io/zewelor/linkding-mcp:latest",
+  "-e", "LINKDING_URL", "-e", "LINKDING_TOKEN", "ghcr.io/zewelor/linkding:latest",
 ]
 env_vars = ["LINKDING_URL", "LINKDING_TOKEN"]
 startup_timeout_sec = 120
@@ -63,6 +97,8 @@ startup_timeout_sec = 120
 `env_vars` forwards variables from the Codex process environment, and `docker -e` passes them into the container. This does not load `.zshrc`. Export both variables **before starting Codex**; starting a new conversation does not change the environment of an already running process. The CLI may use a shared daemon that retains the environment from an earlier launch. To launch an independent CLI with the current exports, use `zsh -ic 'exec codex --no-daemon'`. See the [official Codex MCP documentation](https://developers.openai.com/codex/mcp).
 
 ## Tools
+
+The CLI equivalents are `bookmarks list`, `tags list`, `bookmarks get`, and `bookmarks save --input -`. MCP tool names remain unchanged.
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
@@ -128,6 +164,38 @@ just ci                 # full local validation
 
 During development: `go test -count=1 -run 'TestE2E/new_url_saved_once' ./...`. E2E uses only a local fixture and a dummy token. Artifacts: `artifacts/e2e.json` and `artifacts/e2e-docker.json`; they contain the published tool schemas, results, HTTP sequences, and authorization checks without the token value. The bookmark pagination scenarios verify active and archive routes, date passthrough (including subsecond precision and timezone), API order preservation with IDs that do not follow date order, and total match counts across pages. Metadata scenarios cover creation, partial updates, clearing fields and tags, URL-only no-op, and interrupted PATCH without retry. The detail scenario verifies dates together with stored notes. These scenarios verify the adapter contract; the fixture does not establish Linkding's ordering or search behavior. The test container uses the host network to reach the fixture on loopback. Compatibility with a live instance and hosted CI requires separate validation.
 
-Development and validation rules: [AGENTS.md](AGENTS.md). Local skills are stored only in `.agents/skills`; `skills-lock.json` records their sources and versions.
+CLI E2E also exercises a multi-step search/read/create/edit/clear workflow, null versus omitted fields, interrupted PATCH without retry, API error sanitization, offline discovery, invalid input, and equality between CLI schema output and the actual MCP tool inventory. Artifacts: `artifacts/e2e-cli-native.json` and `artifacts/e2e-cli-docker.json`, including arguments, stdin, stdout, stderr, exit codes, and observed HTTP requests. All tests use a local fixture and dummy token.
+
+Development and validation rules: [AGENTS.md](AGENTS.md). Development skills are stored only in `.agents/skills`; `skills-lock.json` records their sources and versions. The distributable Linkding skill belongs to the plugin below.
+
+## Agent skill and Codex plugin
+
+The repo ships a portable Agent Plugins package at [plugins/linkding](plugins/linkding/plugin.json), with OpenAI presentation metadata under `extensions.com.openai`, one discovery skill, and a repo marketplace at `.agents/plugins/marketplace.json`. This follows the [current OpenAI plugin format](https://developers.openai.com/plugins/build/plugins). The package provides CLI instructions; install the Linkding executable separately and make it available on the agent process's `PATH`.
+
+From a checkout:
+
+```sh
+just build
+export PATH="$PWD/bin:$PATH"
+codex plugin marketplace add .
+codex plugin add linkding@linkding
+```
+
+Alternatively, add the marketplace directly from GitHub after installing the executable:
+
+```sh
+codex plugin marketplace add zewelor/linkding
+codex plugin add linkding@linkding
+```
+
+Export `LINKDING_URL` and `LINKDING_TOKEN` before starting the agent, as described above. Restart or start a new agent session after installing the plugin. The skill loads `linkding skills get core` at runtime, so detailed instructions match the installed CLI. Use `linkding schema ... --json` for exact contracts. Plugin and binary updates are separate; the plugin does not download or install executables.
+
+The skill can also be installed independently from `plugins/linkding/skills/linkding` into an agent's supported skills directory. Keep the short discovery skill intact; the binary supplies the detailed guide. This workflow requires a local environment where the agent can execute `linkding`. The package does not bundle a hosted MCP connection or runtime hooks. Use the native or Docker MCP configuration above when that interface is desired.
+
+## Migration from linkding-mcp
+
+The executable, Go module, repository URLs, image references, and build tags now use `linkding`. Native MCP clients must change their executable path and add `args = ["mcp"]`; bare native invocation now prints help. Docker retains its default MCP behavior through `CMD ["mcp"]` and uses the new image reference. The four MCP tool names, environment variables, and API behavior stay the same.
+
+The GitHub repository is `zewelor/linkding`. Update an existing checkout's remote with `git remote set-url origin git@github.com:zewelor/linkding.git` and rename its directory to `linkding`; update any absolute client or local marketplace paths accordingly. GHCR publication uses `ghcr.io/zewelor/linkding` and is gated on pushes to `main`; it still transfers the tested image to a separate publishing job without rebuilding. Existing image tags remain available for clients that have not migrated.
 
 Official Linkding sources: [REST API](https://linkding.link/api/), [search syntax](https://linkding.link/search/), [source code](https://github.com/sissbruecker/linkding), and [releases](https://github.com/sissbruecker/linkding/releases). [AGENTS.md](AGENTS.md) describes source verification rules for agents.

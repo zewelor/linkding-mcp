@@ -1,8 +1,9 @@
-# Linkding MCP
+# Linkding
 
 - `README.md` describes the project's scope and behavior; update it when tool contracts change.
-- One Go package, four MCP tools over stdio, one Linkding instance. `save_bookmark` creates or edits metadata by URL; `list_bookmarks` can search the archive. Prefer the standard library, concrete types, and simple functions; avoid speculative abstractions and settings.
-- Stdout is reserved for MCP. Never expose the token or raw API error responses. Do not use a live instance in tests.
+- One Go package, a CLI and four MCP tools over stdio, one Linkding instance. `linkding mcp` starts MCP; without arguments the binary shows help. `save_bookmark` creates or edits metadata by URL; `list_bookmarks` can search the archive. Both adapters use the same API methods and result types. Prefer the standard library, concrete types, and simple functions; avoid speculative abstractions and settings.
+- Stdout is reserved for protocol messages in MCP mode and data in CLI mode. Never expose the token or raw API error responses. Do not use a live instance in tests.
+- `docs/cli-core.md` is embedded for `skills get core`; keep it consistent with CLI behavior. The distributable skill and portable plugin live in `plugins/linkding/`; development skills remain in `.agents/skills`. Keep help, schema, and skill discovery offline and credential-free.
 - Verify SDK/API behavior through Context7 and official sources; determine the SDK version from go.mod. Pin actions to full SHAs with version comments and base images to digests. No prereleases or unjustified dependencies. Register new Go tools with `go get -tool`.
 - Official Linkding sources: [REST API](https://linkding.link/api/) (authorization, endpoints, pagination, checking, and saving), [search](https://linkding.link/search/) (query syntax and tags), the [upstream repository](https://github.com/sissbruecker/linkding), and [releases](https://github.com/sissbruecker/linkding/releases). Determine the Linkding version from the target instance or deployment configuration, not go.mod. If documentation does not settle the behavior, inspect upstream code and tests for that version; link to the specific tag or commit. Do not treat our E2E fixture or assumptions as evidence of Linkding's behavior.
 - Describe failure modes and write scenarios before implementation. Never write unit tests after implementation. Prefer E2E with reproducible artifacts; avoid tautological tests. Run selected scenarios during development and the full E2E suite at the end.

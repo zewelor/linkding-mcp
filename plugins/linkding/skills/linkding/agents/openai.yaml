@@ -1,0 +1,4 @@
+interface:
+  display_name: "Linkding"
+  short_description: "Search, read, and save Linkding bookmarks"
+  default_prompt: "Use $linkding to find my recent bookmarks about Go."

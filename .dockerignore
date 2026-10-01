@@ -2,3 +2,7 @@
 !go.mod
 !go.sum
 !main.go
+!cli.go
+!schema.go
+!docs/
+!docs/cli-core.md

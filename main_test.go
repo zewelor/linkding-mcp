@@ -24,7 +24,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-var dockerE2E = flag.Bool("e2e-docker", false, "run the same scenarios through linkding-mcp:e2e")
+var dockerE2E = flag.Bool("e2e-docker", false, "run the same scenarios through linkding:e2e")
 
 const fixtureToken = "e2e-token-must-not-appear-in-errors"
 
@@ -85,7 +85,7 @@ func TestE2E(t *testing.T) {
 			t.Fatal(err)
 		}
 	}()
-	program := filepath.Join(t.TempDir(), "linkding-mcp")
+	program := filepath.Join(t.TempDir(), "linkding")
 	if !*dockerE2E {
 		build := exec.CommandContext(t.Context(), "go", "build", "-o", program, ".")
 		if out, err := build.CombinedOutput(); err != nil {
@@ -94,18 +94,18 @@ func TestE2E(t *testing.T) {
 		}
 	}
 	command := func(base, token string, caFile ...string) *exec.Cmd {
-		cmd := exec.Command(program)
+		cmd := exec.Command(program, "mcp")
 		if *dockerE2E {
 			cmd = exec.Command("docker", "run", "--rm", "-i", "--network", "host",
 				"--read-only", "--user", "65532:65532", "--cap-drop", "ALL",
 				"--security-opt", "no-new-privileges:true", "--log-driver", "none",
-				"-e", "LINKDING_URL", "-e", "LINKDING_TOKEN", "linkding-mcp:e2e")
+				"-e", "LINKDING_URL", "-e", "LINKDING_TOKEN", "linkding:e2e")
 		}
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "LINKDING_URL=" + base, "LINKDING_TOKEN=" + token}
 		if len(caFile) > 0 {
 			if *dockerE2E {
 				cmd.Args = append(cmd.Args[:len(cmd.Args)-1], "--mount", "type=bind,src="+caFile[0]+",dst=/fixture-ca.pem,readonly",
-					"-e", "SSL_CERT_FILE=/fixture-ca.pem", "linkding-mcp:e2e")
+					"-e", "SSL_CERT_FILE=/fixture-ca.pem", "linkding:e2e")
 			} else {
 				cmd.Env = append(cmd.Env, "SSL_CERT_FILE="+caFile[0])
 			}

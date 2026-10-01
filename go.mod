@@ -1,4 +1,4 @@
-module linkding-mcp
+module github.com/zewelor/linkding
 
 go 1.27.1
 

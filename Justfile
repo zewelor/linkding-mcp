@@ -17,10 +17,10 @@ test:
     go test -count=1 -timeout=2m ./...
 
 build:
-    go build -trimpath -o bin/linkding-mcp .
+    go build -trimpath -o bin/linkding .
 
 docker-build:
-    docker build --progress=plain -t linkding-mcp:e2e .
+    docker build --progress=plain -t linkding:e2e .
 
 test-docker:
     go test -count=1 -timeout=2m ./... -args -e2e-docker

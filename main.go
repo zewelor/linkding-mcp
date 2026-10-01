@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -328,13 +327,8 @@ func parseHTTPURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-func run(ctx context.Context) error {
-	c, err := newLinkdingClient(os.Getenv("LINKDING_URL"), os.Getenv("LINKDING_TOKEN"))
-	if err != nil {
-		return err
-	}
-	defer c.http.CloseIdleConnections()
-	server := mcp.NewServer(&mcp.Implementation{Name: "linkding-mcp", Version: "0.1.0"}, nil)
+func newMCPServer(c *linkdingClient) *mcp.Server {
+	server := mcp.NewServer(&mcp.Implementation{Name: "linkding", Version: version}, nil)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_bookmarks", Description: "Search Linkding bookmarks using its search syntax (including #tag). " +
 			"Lists non-archived bookmarks by default; set archived=true to search the archive. " +
@@ -374,7 +368,16 @@ func run(ctx context.Context) error {
 		out, err := c.saveBookmark(ctx, input)
 		return nil, out, err
 	})
-	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
+	return server
+}
+
+func runMCP(ctx context.Context) error {
+	c, err := newLinkdingClient(os.Getenv("LINKDING_URL"), os.Getenv("LINKDING_TOKEN"))
+	if err != nil {
+		return err
+	}
+	defer c.http.CloseIdleConnections()
+	if err := newMCPServer(c).Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("mcp server: %w", err)
 	}
 	return nil
@@ -383,8 +386,16 @@ func run(ctx context.Context) error {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx); err != nil {
-		slog.Error("linkding-mcp stopped", "error", err)
-		os.Exit(1)
+	if err := run(ctx, os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, "linkding:", err)
+		code := 1
+		var usage usageError
+		if errors.As(err, &usage) {
+			code = 2
+		}
+		if ctx.Err() != nil {
+			code = 130
+		}
+		os.Exit(code)
 	}
 }

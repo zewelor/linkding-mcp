@@ -35,13 +35,13 @@ jobs:
       - run: just ci
       - name: Export tested image
         id: export
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'zewelor/linkding-mcp'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'zewelor/linkding'
         run: |
           set -euo pipefail
-          docker image inspect linkding-mcp:e2e --format 'image_id={{.Id}}' >> "$GITHUB_OUTPUT"
-          docker save linkding-mcp:e2e | gzip > "$RUNNER_TEMP/image.tar.gz"
+          docker image inspect linkding:e2e --format 'image_id={{.Id}}' >> "$GITHUB_OUTPUT"
+          docker save linkding:e2e | gzip > "$RUNNER_TEMP/image.tar.gz"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'zewelor/linkding-mcp'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'zewelor/linkding'
         with:
           name: tested-image
           path: ${{ runner.temp }}/image.tar.gz
@@ -57,7 +57,7 @@ jobs:
 
   publish:
     needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'zewelor/linkding-mcp'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'zewelor/linkding'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -69,7 +69,7 @@ jobs:
           path: ${{ runner.temp }}/image
       - name: Publish tested image to GHCR
         env:
-          IMAGE: ghcr.io/zewelor/linkding-mcp
+          IMAGE: ghcr.io/zewelor/linkding
           REVISION: ${{ github.sha }}
           EXPECTED_IMAGE_ID: ${{ needs.verify.outputs.image_id }}
           GHCR_USER: ${{ github.actor }}
@@ -77,13 +77,13 @@ jobs:
         run: |
           set -euo pipefail
           docker load --input "$RUNNER_TEMP/image/image.tar.gz"
-          test "$(docker image inspect linkding-mcp:e2e --format '{{.Id}}')" = "$EXPECTED_IMAGE_ID"
+          test "$(docker image inspect linkding:e2e --format '{{.Id}}')" = "$EXPECTED_IMAGE_ID"
           export DOCKER_CONFIG
           DOCKER_CONFIG="$(mktemp -d)"
           trap 'rm -rf "$DOCKER_CONFIG"' EXIT
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
-          docker tag linkding-mcp:e2e "$IMAGE:sha-$REVISION"
-          docker tag linkding-mcp:e2e "$IMAGE:latest"
+          docker tag linkding:e2e "$IMAGE:sha-$REVISION"
+          docker tag linkding:e2e "$IMAGE:latest"
           docker push "$IMAGE:sha-$REVISION"
           docker push "$IMAGE:latest"
           printf 'Published `%s:latest` from `%s` (tested image `%s`).\n' "$IMAGE" "$REVISION" "$EXPECTED_IMAGE_ID" >> "$GITHUB_STEP_SUMMARY"
